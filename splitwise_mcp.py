@@ -39,15 +39,17 @@ SPLITWISE_BASE = "https://secure.splitwise.com/api/v3.0"
 API_KEY = os.getenv('API_KEY', 'YOUR_SPLITWISE_API_KEY')
 
 # ------------------ Pydantic Models ------------------
+class Participant(BaseModel):
+    user_id: int
+    share: float
+    paid: bool
+
 class ExpenseIntent(BaseModel):
     user_id: int
     amount: float
-    currency: str = "INR"
+    currency: str
     description: str
-    participants: List[int]
-    split_type: str = "equal"  # or 'shares' or 'unequal'
-    # For 'shares' or 'unequal', specify how much each participant owes
-    owed_shares: Optional[List[float]] = None  # Must match participants order
+    participants: List[Participant]
 
 class FriendIntent(BaseModel):
     user_email: str
@@ -117,30 +119,17 @@ async def call_splitwise(method: str, path: str, payload: dict = None, params: d
 # }
 @app.post('/mcp/create_expense', response_model=MCPResponse)
 async def mcp_create_expense(intent: ExpenseIntent):
-    body = {"cost": f"{intent.amount:.2f}",
-            "description": intent.description,
-            "currency_code": intent.currency}
-    
-    if intent.split_type == "equal":
-        share = round(intent.amount / len(intent.participants), 2)
-        for idx, uid in enumerate(intent.participants):
-            paid = f"{intent.amount:.2f}" if uid == intent.user_id else "0.00"
-            owed = f"{share:.2f}" if uid != intent.user_id else "0.00"
-            body[f"users__{idx}__user_id"] = uid
-            body[f"users__{idx}__paid_share"] = paid
-            body[f"users__{idx}__owed_share"] = owed
-    elif intent.split_type in ("shares", "unequal"):
-        if not intent.owed_shares or len(intent.owed_shares) != len(intent.participants):
-            raise HTTPException(status_code=400, detail="owed_shares must be provided and match participants length for 'shares' or 'unequal' split_type.")
-        for idx, (uid, owed_share) in enumerate(zip(intent.participants, intent.owed_shares)):
-            paid = f"{intent.amount:.2f}" if uid == intent.user_id else "0.00"
-            owed = f"{owed_share:.2f}"
-            body[f"users__{idx}__user_id"] = uid
-            body[f"users__{idx}__paid_share"] = paid
-            body[f"users__{idx}__owed_share"] = owed
-    else:
-        raise HTTPException(status_code=400, detail="Invalid split_type. Use 'equal', 'shares', or 'unequal'.")
-    
+    body = {
+        "cost": f"{intent.amount:.2f}",
+        "currency_code": intent.currency,
+        "description": intent.description,
+        "group_id": 0  # or allow as optional in intent if you want
+    }
+    for idx, part in enumerate(intent.participants):
+        body[f"users__{idx}__user_id"] = part.user_id
+        body[f"users__{idx}__owed_share"] = f"{part.share:.2f}"
+        body[f"users__{idx}__paid_share"] = f"{intent.amount:.2f}" if part.paid else "0.00"
+
     api_resp = await call_splitwise('POST', '/create_expense', payload=body)
     return {"status": "success", "data": api_resp}
 
