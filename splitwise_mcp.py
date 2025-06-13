@@ -25,15 +25,16 @@ load_dotenv()
 import json
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Any
+import os
 
 # Load Splitwise OpenAPI spec (for future schema validation)
 with open('openapi.json') as f:
     splitwise_spec = json.load(f)
 
 # Configuration via environment or hardcode for demo
-import os
 SPLITWISE_BASE = "https://secure.splitwise.com/api/v3.0"
 API_KEY = os.getenv('API_KEY', 'YOUR_SPLITWISE_API_KEY')
 
@@ -63,6 +64,11 @@ class MCPResponse(BaseModel):
 
 app = FastAPI(title="Splitwise MCP Service")
 
+# ✅ Add root route for Render health check
+@app.get("/", include_in_schema=False)
+async def root():
+    return {"status": "Splitwise MCP is running"}
+
 # ------------------ Helper ------------------
 async def call_splitwise(method: str, path: str, payload: dict = None, params: dict = None):
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -76,11 +82,9 @@ async def call_splitwise(method: str, path: str, payload: dict = None, params: d
 # ------------------ Expense Endpoints ------------------
 @app.post('/mcp/create_expense', response_model=MCPResponse)
 async def mcp_create_expense(intent: ExpenseIntent):
-    # Build Splitwise payload
     body = {"cost": f"{intent.amount:.2f}",
             "description": intent.description,
             "currency_code": intent.currency}
-    # Compute equal shares
     share = round(intent.amount / len(intent.participants), 2)
     for idx, uid in enumerate(intent.participants):
         paid = f"{intent.amount:.2f}" if uid == intent.user_id else "0.00"
